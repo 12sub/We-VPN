@@ -1,0 +1,34 @@
+{{define "dashboard_content.html"}}
+<!-- Server Status -->
+<div class="bg-white p-6 rounded-lg shadow-md mb-6">
+    <h2 class="text-xl font-semibold mb-4">Server Status</h2>
+    <div class="flex items-center space-x-4">
+        <span class="px-3 py-1 rounded-full text-sm font-medium 
+            {{if .Status.IsRunning}} bg-green-100 text-green-800 {{else}} bg-red-100 text-red-800 {{end}}">
+            {{if .Status.IsRunning}} Running {{else}} Stopped {{end}}
+        </span>
+        <span class="text-gray-600">Port: {{.Status.ListenPort}}</span>
+        <span class="text-gray-600">Peers: {{.Status.TotalPeers}}</span>
+    </div>
+</div>
+
+<!-- Peers Section -->
+<div class="bg-white p-6 rounded-lg shadow-md">
+    <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold">Connected Peers</h2>
+        <button 
+            hx-get="/add-peer-form" 
+            hx-target="#modal-container" 
+            hx-swap="innerHTML"
+            class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition">
+            + Add Peer
+        </button>
+    </div>
+
+    <div id="modal-container" class="mb-4"></div>
+
+    <div id="peer-list-container">
+        {{template "peer_list.html" .}}
+    </div>
+</div>
+{{end}}

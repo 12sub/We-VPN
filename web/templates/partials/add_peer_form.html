@@ -1,0 +1,16 @@
+{{define "add_peer_form.html"}}
+<div class="bg-blue-50 border border-blue-200 p-4 rounded-md mb-4">
+    <form hx-post="/add-peer" hx-target="#peer-list-container" hx-swap="innerHTML" hx-on::after-request="this.remove()">
+        <div class="flex items-center space-x-4">
+            <input type="text" name="peer_name" placeholder="Peer Name (e.g., laptop)" 
+                   class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+            <button type="submit" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition">
+                Generate & Add
+            </button>
+            <button type="button" onclick="this.closest('.bg-blue-50').remove()" class="text-gray-500 hover:text-gray-700">
+                Cancel
+            </button>
+        </div>
+    </form>
+</div>
+{{end}}
