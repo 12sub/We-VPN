@@ -1,4 +1,4 @@
 *.pem
-*.db
+vpn.db
 **.sqlite
-wg0.conf
+*.conf
