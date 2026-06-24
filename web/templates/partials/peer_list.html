@@ -1,24 +1,67 @@
 {{define "peer_list.html"}}
-{{if .Peers}}
-<table class="min-w-full divide-y divide-gray-200">
-    <thead class="bg-gray-50">
-        <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Allowed IPs</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Public Key</th>
-        </tr>
-    </thead>
-    <tbody class="bg-white divide-y divide-gray-200">
-        {{range .Peers}}
-        <tr>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{.Name}}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{.AllowedIPs}}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono truncate max-w-xs">{{.PublicKey}}</td>
-        </tr>
-        {{end}}
-    </tbody>
-</table>
-{{else}}
-<p class="text-gray-500 text-center py-4">No peers configured yet.</p>
-{{end}}
+<div id="peer-list-container" hx-get="/peer-list" hx-trigger="every 5s" hx-target="#peer-list-container" hx-swap="innerHTML">
+    {{if .Peers}}
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">IP</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Handshake</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transfer</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {{range .Peers}}
+                <tr class="hover:bg-gray-50 {{if .Disabled}}opacity-50{{end}}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{{.Name}}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 font-mono">{{.AllowedIPs}}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">{{.LatestHandshake}}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                        <span class="text-green-600">{{formatBytes .TransferRX}}</span> / 
+                        <span class="text-blue-600">{{formatBytes .TransferTX}}</span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-center">
+                        {{if .Disabled}}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Disabled</span>
+                        {{else}}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+                        {{end}}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                        <!-- QR Button -->
+                        <button hx-get="/peer/{{.Name}}/qr" hx-target="body" hx-swap="beforeend" 
+                                class="text-purple-600 hover:text-purple-900" title="Show QR">
+                            QR
+                        </button>
+                        
+                        <!-- Toggle Button -->
+                        <button hx-post="/peer/{{.Name}}/toggle" hx-target="#peer-list-container" hx-swap="innerHTML"
+                                class="{{if .Disabled}}text-green-600 hover:text-green-900{{else}}text-yellow-600 hover:text-yellow-900{{end}}" 
+                                title="{{if .Disabled}}Enable{{else}}Disable{{end}}">
+                            {{if .Disabled}}Enable{{else}}Disable{{end}}
+                        </button>
+
+                        <!-- Download Button -->
+                        <a href="/peer/{{.Name}}/download" class="text-blue-600 hover:text-blue-900" title="Download Config">
+                            DL
+                        </a>
+
+                        <!-- Delete Button -->
+                        <button hx-delete="/peer/{{.Name}}" hx-target="#peer-list-container" hx-swap="innerHTML"
+                                hx-confirm="Permanently delete {{.Name}}?" class="text-red-600 hover:text-red-900" title="Delete">
+                            Del
+                        </button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <p class="text-gray-500 text-center py-4">No peers configured yet.</p>
+    {{end}}
+</div>
 {{end}}

@@ -1,10 +1,16 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"fmt"
 	"html/template"
+	"log"
 	"net/http"
-	// "path/filepath"
+	"time"
 	"example.com/Web-VPN/internal/wireguard"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/skip2/go-qrcode"
 )
 
 type DashboardHandler struct {
@@ -13,10 +19,29 @@ type DashboardHandler struct {
 }
 
 func NewDashboardHandler(wgManager *wireguard.Manager) *DashboardHandler {
-	// Parse all templates
-	tmpl := template.Must(template.ParseGlob("web/templates/*.html"))
-	template.Must(tmpl.ParseGlob("web/templates/partials/*.html"))
-	
+	// 1. Define custom template functions
+	funcMap := template.FuncMap{
+		"formatBytes": func(bytes int64) string {
+			const unit = 1024
+			if bytes < unit {
+				return fmt.Sprintf("%d B", bytes)
+			}
+			div, exp := int64(unit), 0
+			for n := bytes / unit; n >= unit; n /= unit {
+				div *= unit
+				exp++
+			}
+			return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+		},
+	}
+
+	// 2. Initialize template with FuncMap
+	tmpl := template.New("").Funcs(funcMap)
+
+	// 3. Parse all templates (Make sure you run the app from the root directory!)
+	tmpl = template.Must(tmpl.ParseGlob("web/templates/*.html"))
+	tmpl = template.Must(tmpl.ParseGlob("web/templates/partials/*.html"))
+
 	return &DashboardHandler{
 		wgManager: wgManager,
 		templates: tmpl,
@@ -26,6 +51,21 @@ func NewDashboardHandler(wgManager *wireguard.Manager) *DashboardHandler {
 func (h *DashboardHandler) ServeDashboard(w http.ResponseWriter, r *http.Request) {
 	status, _ := h.wgManager.GetStatus()
 	peers, _ := h.wgManager.GetPeers()
+	stats, _ := h.wgManager.GetPeerStats(peers)
+
+	// Merge stats
+	for i := range peers {
+		if s, ok := stats[peers[i].Name]; ok {
+			peers[i].Endpoint = s.Endpoint
+			if s.LatestHandshake.IsZero() {
+				peers[i].LatestHandshake = "Never"
+			} else {
+				peers[i].LatestHandshake = time.Since(s.LatestHandshake).Round(time.Second).String() + " ago"
+			}
+			peers[i].TransferRX = s.TransferRX
+			peers[i].TransferTX = s.TransferTX
+		}
+	}
 
 	data := map[string]interface{}{
 		"Status": status,
@@ -34,11 +74,17 @@ func (h *DashboardHandler) ServeDashboard(w http.ResponseWriter, r *http.Request
 
 	// Check if it's an HTMX request
 	if r.Header.Get("HX-Request") == "true" {
-		h.templates.ExecuteTemplate(w, "dashboard_content.html", data)
+		err := h.templates.ExecuteTemplate(w, "dashboard_content.html", data)
+		if err != nil { log.Printf("HTMX Template Error: %v", err) }
 		return
 	}
 
-	h.templates.ExecuteTemplate(w, "base.html", data)
+	// Render full page
+	err := h.templates.ExecuteTemplate(w, "base.html", data)
+	if err != nil {
+		log.Printf("FATAL Template Error: %v", err)
+		http.Error(w, "Template rendering failed. Check terminal.", http.StatusInternalServerError)
+	}
 }
 
 func (h *DashboardHandler) GetAddPeerForm(w http.ResponseWriter, r *http.Request) {
@@ -48,25 +94,74 @@ func (h *DashboardHandler) GetAddPeerForm(w http.ResponseWriter, r *http.Request
 func (h *DashboardHandler) PostAddPeer(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	name := r.FormValue("peer_name")
-	
-	if name == "" {
-		http.Error(w, "Name is required", http.StatusBadRequest)
-		return
-	}
+	if name == "" { http.Error(w, "Name required", http.StatusBadRequest); return }
 
-	err := h.wgManager.AddPeer(name)
-	if err != nil {
-		http.Error(w, "Failed to add peer: "+err.Error(), http.StatusInternalServerError)
-		return
+	if err := h.wgManager.AddPeer(name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
+	h.GetPeerList(w, r)
+}
 
-	// Return the updated peer list for HTMX to swap
+func (h *DashboardHandler) GetPeerList(w http.ResponseWriter, r *http.Request) {
 	peers, _ := h.wgManager.GetPeers()
+	stats, _ := h.wgManager.GetPeerStats(peers)
 	status, _ := h.wgManager.GetStatus()
-	
-	data := map[string]interface{}{
-		"Status": status,
-		"Peers":  peers,
+
+	for i := range peers {
+		if s, ok := stats[peers[i].Name]; ok {
+			peers[i].Endpoint = s.Endpoint
+			if s.LatestHandshake.IsZero() {
+				peers[i].LatestHandshake = "Never"
+			} else {
+				peers[i].LatestHandshake = time.Since(s.LatestHandshake).Round(time.Second).String() + " ago"
+			}
+			peers[i].TransferRX = s.TransferRX
+			peers[i].TransferTX = s.TransferTX
+		}
 	}
-	h.templates.ExecuteTemplate(w, "peer_list.html", data)
+
+	data := map[string]interface{}{"Status": status, "Peers": peers}
+	err := h.templates.ExecuteTemplate(w, "peer_list.html", data)
+	if err != nil { log.Printf("Peer List Template Error: %v", err) }
+}
+
+func (h *DashboardHandler) DeletePeer(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := h.wgManager.DeletePeer(name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError); return
+	}
+	h.GetPeerList(w, r)
+}
+
+func (h *DashboardHandler) DownloadConfig(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	configStr, err := h.wgManager.GenerateClientConfig(name)
+	if err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.conf", name))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Write([]byte(configStr))
+}
+
+func (h *DashboardHandler) TogglePeer(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := h.wgManager.TogglePeer(name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError); return
+	}
+	h.GetPeerList(w, r)
+}
+
+func (h *DashboardHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	configStr, err := h.wgManager.GenerateClientConfig(name)
+	if err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
+
+	png, err := qrcode.Encode(configStr, qrcode.Medium, 256)
+	if err != nil { http.Error(w, "QR fail", http.StatusInternalServerError); return }
+
+	base64Img := base64.StdEncoding.EncodeToString(png)
+	data := map[string]interface{}{"PeerName": name, "QRBase64": base64Img}
+	
+	err = h.templates.ExecuteTemplate(w, "qr_modal.html", data)
+	if err != nil { log.Printf("QR Template Error: %v", err) }
 }

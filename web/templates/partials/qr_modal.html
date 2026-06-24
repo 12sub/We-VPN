@@ -1,0 +1,12 @@
+{{define "qr_modal.html"}}
+<div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50" id="qr-modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-80 text-center">
+        <h3 class="text-lg font-semibold mb-4">Scan to Connect: {{.PeerName}}</h3>
+        <img src="data:image/png;base64,{{.QRBase64}}" alt="QR Code" class="mx-auto mb-4">
+        <button onclick="document.getElementById('qr-modal').remove()" 
+                class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition w-full">
+            Close
+        </button>
+    </div>
+</div>
+{{end}}
