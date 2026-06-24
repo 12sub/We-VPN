@@ -1,1 +1,4 @@
 *.pem
+*.db
+**.sqlite
+wg0.conf
