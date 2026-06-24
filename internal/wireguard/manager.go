@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"example.com/Web-VPN/internal/config"
+	"example.com/Web-VPN/internal/database"
 	"example.com/Web-VPN/internal/models"
 	"gopkg.in/ini.v1"
 )
@@ -16,13 +17,16 @@ type Manager struct {
 	ConfigPath string
 	Interface  string
 	AppConfig  *config.Config
+	DB         *database.DB
 }
 
-func NewManager(cfg *config.Config) *Manager {
+func NewManager(cfg *config.Config, db *database.DB) *Manager {
+
 	return &Manager{
 		ConfigPath: cfg.WgConfigPath,
 		Interface:  cfg.WgInterface,
 		AppConfig:  cfg,
+		DB:         db,
 	}
 }
 
@@ -65,7 +69,7 @@ func (m *Manager) GetPeers() ([]models.Peer, error) {
 		if section.Name() == "DEFAULT" || section.Name() == "Interface" {
 			continue
 		}
-		
+
 		disabled := false
 		if section.HasKey("Disabled") {
 			disabled, _ = section.Key("Disabled").Bool()
@@ -74,7 +78,7 @@ func (m *Manager) GetPeers() ([]models.Peer, error) {
 		peers = append(peers, models.Peer{
 			Name:       section.Name(),
 			PublicKey:  section.Key("PublicKey").String(),
-			PrivateKey: section.Key("PrivateKey").String(), 
+			PrivateKey: section.Key("PrivateKey").String(),
 			AllowedIPs: section.Key("AllowedIPs").String(),
 			Disabled:   disabled,
 		})
@@ -129,8 +133,16 @@ func (m *Manager) GetPeerStats(peers []models.Peer) (map[string]models.PeerStats
 	return stats, nil
 }
 
-// AddPeer updated to save PrivateKey
+// Update AddPeer to use DB for IP
 func (m *Manager) AddPeer(name string) error {
+	// 1. Get next IP from DB
+	ip, err := m.DB.GetNextIP()
+	if err != nil {
+		return err
+	}
+	allowedIP := ip + "/32"
+
+	// 2. Generate Keys (same as before)
 	privKeyCmd := exec.Command("wg", "genkey")
 	privKeyBytes, _ := privKeyCmd.Output()
 	privKey := strings.TrimSpace(string(privKeyBytes))
@@ -140,10 +152,12 @@ func (m *Manager) AddPeer(name string) error {
 	pubKeyBytes, _ := pubKeyCmd.Output()
 	pubKey := strings.TrimSpace(string(pubKeyBytes))
 
-	peers, _ := m.GetPeers()
-	nextIP := len(peers) + 2
-	allowedIP := fmt.Sprintf("10.0.0.%d/32", nextIP)
+	// 3. Save to DB
+	if err := m.DB.AddPeer(name, ip); err != nil {
+		return fmt.Errorf("DB error: %w", err)
+	}
 
+	// 4. Update Config File (same as before)
 	cfg, _ := ini.Load(m.ConfigPath)
 	if cfg == nil {
 		cfg = ini.Empty()
@@ -151,14 +165,10 @@ func (m *Manager) AddPeer(name string) error {
 
 	section, _ := cfg.NewSection(name)
 	section.Key("PublicKey").SetValue(pubKey)
-	section.Key("PrivateKey").SetValue(privKey) // Save for later download
+	section.Key("PrivateKey").SetValue(privKey)
 	section.Key("AllowedIPs").SetValue(allowedIP)
 
-	if err := cfg.SaveTo(m.ConfigPath); err != nil {
-		return err
-	}
-
-	// Sync with running interface
+	cfg.SaveTo(m.ConfigPath)
 	exec.Command("wg", "syncconf", m.Interface, m.ConfigPath).Run()
 	return nil
 }
@@ -184,6 +194,7 @@ func (m *Manager) DeletePeer(name string) error {
 
 	// Remove from running interface
 	exec.Command("wg", "set", m.Interface, "peer", pubKey, "remove").Run()
+	m.DB.DeletePeer(name)
 	return nil
 }
 
@@ -206,9 +217,9 @@ func (m *Manager) TogglePeer(name string) error {
 		return err
 	}
 
-	// Sync the interface. 
+	// Sync the interface.
 	// Note: wg syncconf will add missing peers and remove peers that are no longer in the config.
-	// Since we keep the peer in the config but just mark it disabled, we need to manually 
+	// Since we keep the peer in the config but just mark it disabled, we need to manually
 	// remove it from the running interface if it was just disabled.
 	if !currentState { // It was enabled, now it's disabled
 		pubKey := section.Key("PublicKey").String()
@@ -216,7 +227,6 @@ func (m *Manager) TogglePeer(name string) error {
 	} else { // It was disabled, now it's enabled. syncconf will add it back.
 		exec.Command("wg", "syncconf", m.Interface, m.ConfigPath).Run()
 	}
-
 
 	return nil
 }
@@ -235,15 +245,42 @@ func (m *Manager) GenerateClientConfig(peerName string) (string, error) {
 		return "", fmt.Errorf("peer not found or missing private key")
 	}
 
-	// Get Server Public Key
-	cmd := exec.Command("wg", "show", m.Interface, "public-key")
-	serverPubKeyBytes, _ := cmd.Output()
-	serverPubKey := strings.TrimSpace(string(serverPubKeyBytes))
+	// --- FIX: Robust Server Public Key Retrieval ---
+	var serverPubKey string
 
-	// Fallback if interface is down (read from config)
+	// 1. Try to get it from the running interface
+	cmd := exec.Command("wg", "show", m.Interface, "public-key")
+	serverPubKeyBytes, err := cmd.Output()
+	if err == nil {
+		serverPubKey = strings.TrimSpace(string(serverPubKeyBytes))
+	}
+
+	// 2. Fallback: If interface is down, derive it from the PrivateKey in the config file
 	if serverPubKey == "" {
-		cfg, _ := ini.Load(m.ConfigPath)
-		serverPubKey = cfg.Section("Interface").Key("PublicKey").String()
+		cfg, err := ini.Load(m.ConfigPath)
+		if err == nil {
+			serverPrivKey := cfg.Section("Interface").Key("PrivateKey").String()
+			if serverPrivKey != "" {
+				pubKeyCmd := exec.Command("wg", "pubkey")
+				pubKeyCmd.Stdin = strings.NewReader(serverPrivKey)
+				pubKeyOut, err := pubKeyCmd.Output()
+				if err == nil {
+					serverPubKey = strings.TrimSpace(string(pubKeyOut))
+				}
+			}
+		}
+	}
+
+	// 3. Final check
+	if serverPubKey == "" {
+		return "", fmt.Errorf("could not determine server public key. Ensure wg0.conf has a valid PrivateKey in the [Interface] section")
+	}
+	// -----------------------------------------------
+
+	// Ensure Endpoint and DNS are not empty
+	endpoint := m.AppConfig.ServerEndpoint
+	if endpoint == "" || strings.Contains(endpoint, "YOUR_SERVER") {
+		return "", fmt.Errorf("please update ServerEndpoint in internal/config/config.go with your actual public IP")
 	}
 
 	configStr := fmt.Sprintf(`[Interface]
@@ -256,7 +293,7 @@ PublicKey = %s
 Endpoint = %s
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
-`, targetPeer.PrivateKey, targetPeer.AllowedIPs, m.AppConfig.DNS, serverPubKey, m.AppConfig.ServerEndpoint)
+`, targetPeer.PrivateKey, targetPeer.AllowedIPs, m.AppConfig.DNS, serverPubKey, endpoint)
 
 	return configStr, nil
 }

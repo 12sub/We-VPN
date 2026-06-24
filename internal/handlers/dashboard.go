@@ -150,7 +150,60 @@ func (h *DashboardHandler) TogglePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	h.GetPeerList(w, r)
 }
+var trafficHistory = []map[string]int64{}
 
+func (h *DashboardHandler) GetTrafficAPI(w http.ResponseWriter, r *http.Request) {
+	rx, tx, _ := h.wgManager.GetTotalTraffic()
+	
+	// Append to history (keep last 10)
+	trafficHistory = append(trafficHistory, map[string]int64{"rx": rx, "tx": tx})
+	if len(trafficHistory) > 10 {
+		trafficHistory = trafficHistory[1:]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	// Simple JSON encoding without importing encoding/json to keep it brief, 
+	// but in production, use json.Marshal!
+	jsonStr := "["
+	for i, pt := range trafficHistory {
+		jsonStr += fmt.Sprintf(`{"rx":%d,"tx":%d}`, pt["rx"], pt["tx"])
+		if i < len(trafficHistory)-1 { jsonStr += "," }
+	}
+	jsonStr += "]"
+	w.Write([]byte(jsonStr))
+}
+
+func (h *DashboardHandler) ServerControl(w http.ResponseWriter, r *http.Request) {
+	action := chi.URLParam(r, "action")
+	var err error
+
+	switch action {
+	case "start":
+		err = h.wgManager.StartService()
+	case "stop":
+		err = h.wgManager.StopService()
+	case "restart":
+		err = h.wgManager.RestartService()
+	default:
+		http.Error(w, "Invalid action", http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		// Return HTMX error trigger
+		w.Header().Set("HX-Trigger", `{"showError": "Failed to ` + action + ` service"}`)
+		return
+	}
+	
+	// Refresh the status bar
+	h.GetPeerList(w, r) 
+}
+
+func (h *DashboardHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
+	logs, _ := h.wgManager.GetLogs()
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(logs))
+}
 func (h *DashboardHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	configStr, err := h.wgManager.GenerateClientConfig(name)

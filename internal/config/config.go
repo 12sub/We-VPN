@@ -13,9 +13,9 @@ type Config struct {
 	DNS            string // e.g., "1.1.1.1"
 
 	// Auth
-	AdminUser     string
-	AdminPass     string
-	SessionToken  string // Generated on startup
+	AdminUser    string
+	AdminPass    string
+	SessionToken string // Generated on startup
 }
 
 func Load() *Config {
@@ -25,7 +25,7 @@ func Load() *Config {
 		Port:           ":8080",
 		WgConfigPath:   "./wg0.conf", // Change to /etc/wireguard/wg0.conf in prod
 		WgInterface:    "wg0",
-		ServerEndpoint: "172.30.49.89:51820", // <-- UPDATE THIS
+		ServerEndpoint: "172.22.126.52:51820", // <-- UPDATE THIS
 		DNS:            "1.1.1.1",
 
 		AdminUser:    "admin",

@@ -7,6 +7,7 @@ import (
 	"example.com/Web-VPN/internal/config"
 	"example.com/Web-VPN/internal/handlers"
 	"example.com/Web-VPN/internal/wireguard"
+	"example.com/Web-VPN/internal/database"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,7 +15,13 @@ import (
 
 func main() {
 	cfg := config.Load()
-	wgManager := wireguard.NewManager(cfg)
+	// 1. Init DB
+	db, err := database.NewDB("./vpn.db")
+	if err != nil {
+		log.Fatal("Failed to initialize DB:", err)
+	}
+	defer db.Close()
+	wgManager := wireguard.NewManager(cfg, db)
 	dashHandler := handlers.NewDashboardHandler(wgManager)
 	authHandler := handlers.NewAuthHandler(cfg)
 
@@ -42,10 +49,12 @@ func main() {
 	r.Get("/peer-list", dashHandler.GetPeerList)
 	r.Delete("/peer/{name}", dashHandler.DeletePeer)
 	r.Get("/peer/{name}/download", dashHandler.DownloadConfig)
-
-	// Phase 3 Routes
 	r.Post("/peer/{name}/toggle", dashHandler.TogglePeer)
 	r.Get("/peer/{name}/qr", dashHandler.GetQRCode)
+	r.Post("/server/{action}", dashHandler.ServerControl)
+	r.Get("/server/logs", dashHandler.GetLogs)
+	r.Get("/api/traffic", dashHandler.GetTrafficAPI)
+
 
 	fmt.Printf("Server starting on http://localhost%s\n", cfg.Port)
 	log.Fatal(http.ListenAndServe(cfg.Port, r))

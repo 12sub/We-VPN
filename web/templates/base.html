@@ -9,18 +9,74 @@
 </head>
 <body class="bg-gray-100 text-gray-800">
     <div class="container mx-auto px-4 py-8">
-        <<!-- Update the header section in base.html -->
+        <!-- Update the header section in base.html -->
 <header class="mb-8 flex justify-between items-center">
     <div>
-        <h1 class="text-3xl font-bold text-blue-600">We-VPN</h1>
-        <p class="text-gray-600">WireGuard Management Dashboard</p>
-    </div>
-    <a href="/logout" class="text-sm text-gray-500 hover:text-gray-800">Logout</a>
+                <h1 class="text-3xl font-bold text-blue-600">GoGuard VPN</h1>
+                <p class="text-gray-600 text-sm">WireGuard Management</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <!-- Server Control Buttons -->
+                <button hx-post="/server/start" hx-target="#peer-list-container" hx-swap="innerHTML" class="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600">Start</button>
+                <button hx-post="/server/stop" hx-target="#peer-list-container" hx-swap="innerHTML" class="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600">Stop</button>
+                <button hx-post="/server/restart" hx-target="#peer-list-container" hx-swap="innerHTML" class="px-3 py-1 bg-yellow-500 text-white text-xs rounded hover:bg-yellow-600">Restart</button>
+                
+                <button hx-get="/server/logs" hx-target="#log-modal-body" hx-swap="innerHTML" 
+                        onclick="document.getElementById('log-modal').classList.remove('hidden')"
+                        class="px-3 py-1 bg-gray-700 text-white text-xs rounded hover:bg-gray-800 ml-2">Logs</button>
+
+                <a href="/logout" class="text-sm text-gray-500 hover:text-gray-800 ml-4">Logout</a>
+            </div>
 </header>
+<!-- Traffic Graph -->
+        <div class="bg-white p-4 rounded-lg shadow-md mb-6">
+            <h2 class="text-lg font-semibold mb-2">Server Traffic (Last 10 Polls)</h2>
+            <canvas id="trafficChart" height="100"></canvas>
+        </div>
 
         <main id="dashboard-content">
             {{template "dashboard_content.html" .}}
         </main>
     </div>
+    <!-- Log Modal -->
+    <div id="log-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">System Logs</h3>
+                <button onclick="document.getElementById('log-modal').classList.add('hidden')" class="text-gray-500 hover:text-gray-800">Close</button>
+            </div>
+            <pre id="log-modal-body" class="bg-gray-900 text-green-400 p-4 rounded overflow-auto flex-1 text-xs font-mono">Loading...</pre>
+        </div>
+    </div>
+
+    <!-- Chart.js Initialization -->
+    <script>
+        const ctx = document.getElementById('trafficChart').getContext('2d');
+        const trafficChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(10).fill(''),
+                datasets: [
+                    { label: 'RX (Download)', data: [], borderColor: 'rgb(34, 197, 94)', tension: 0.3, fill: false },
+                    { label: 'TX (Upload)', data: [], borderColor: 'rgb(59, 130, 246)', tension: 0.3, fill: false }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } },
+                animation: { duration: 0 } // Disable animation for real-time feel
+            }
+        });
+
+        // Poll traffic data every 5 seconds
+        setInterval(async () => {
+            const res = await fetch('/api/traffic');
+            const data = await res.json();
+            
+            trafficChart.data.datasets[0].data = data.map(d => d.rx / 1024); // Convert to KB
+            trafficChart.data.datasets[1].data = data.map(d => d.tx / 1024);
+            trafficChart.update();
+        }, 5000);
+    </script>
 </body>
 </html>
